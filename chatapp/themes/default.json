@@ -1,0 +1,26 @@
+{
+  "name": "Default Dark",
+  "primary_color": "Teal",
+  "theme_style": "Dark",
+  "background_color": [
+    0.1,
+    0.1,
+    0.1,
+    1
+  ],
+  "text_color": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "accent_color": [
+    0.2,
+    0.6,
+    1,
+    1
+  ],
+  "font_regular": "Roboto",
+  "font_bold": "Roboto-Bold",
+  "font_size": 16
+}
