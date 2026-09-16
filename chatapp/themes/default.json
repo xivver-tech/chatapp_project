@@ -1,6 +1,6 @@
 {
   "name": "Default Dark",
-  "primary_color": "Teal",
+  "primary_color": "Orange",
   "theme_style": "Dark",
   "background_color": [
     0.1,
@@ -22,5 +22,7 @@
   ],
   "font_regular": "Roboto",
   "font_bold": "Roboto-Bold",
-  "font_size": 16
+  "font_size": 16,
+  "use_gradient": true,
+  "overlay_glow": true
 }

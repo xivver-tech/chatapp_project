@@ -2,7 +2,7 @@
   "test1": {
     "password_hash": "7c51aac2571f608bb6fabbc75ab6f85a2cd8baf646655c3f13badf81fa6c6d31",
     "salt": "be4df1c54dee8a20c74eb27bd5089ad8",
-    "is_superuser": true
+    "is_superuser": false
   },
   "xivver": {
     "password_hash": "64e83a82aec46e9dd126058aa444ecaa07764a91a09d7c6b292454e74b7d9af6",
@@ -12,6 +12,21 @@
   "test2": {
     "password_hash": "b743f9e1fb7db40b75138da8aff29d6f042c9543874dc0eeee8fcc3639f2877a",
     "salt": "f61644009744c8900f979c9ca36f999c",
+    "is_superuser": false
+  },
+  "deadbeef": {
+    "password_hash": "29b9931cab42642b457f980a3bb7ab17f34494db14c7a5e505935de4a11aeb36",
+    "salt": "a0de6fd4e4ffc542e04fff2105622592",
     "is_superuser": true
+  },
+  "yahya": {
+    "password_hash": "18f0237a757448837ad23d4768a1608d0f94f58bb09683dd49ce6d60b4691be5",
+    "salt": "4ee64fe69f05325e25c73d892e823c88",
+    "is_superuser": false
+  },
+  "xivver_nexus": {
+    "password_hash": "775f3c5e6c49694f3cf143224a97a98ecb5bce6b8737727c22364933a037ca7a",
+    "salt": "c87c82a85272b1281ee9e402d090d606",
+    "is_superuser": false
   }
 }

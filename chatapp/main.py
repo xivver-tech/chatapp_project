@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import asyncio
 
 import requests
@@ -11,14 +12,25 @@ from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.core.text import LabelBase
-from nio import AsyncClient, LoginResponse, RegisterResponse, RoomMessageText
+from nio import AsyncClient, LoginResponse, RegisterResponse, RoomMessageText, SyncResponse
 
 from user_store import add_user, is_superuser, list_users, set_superuser
 
 THEME_PATH = os.path.join(os.path.dirname(__file__), "themes", "default.json")
 AVAILABLE_COLORS = ["Blue", "Red", "Green", "Purple", "Orange", "Teal"]
+
+COLOR_RGB = {
+    "Blue": (0.13, 0.35, 0.95),
+    "Red": (0.85, 0.15, 0.15),
+    "Green": (0.15, 0.65, 0.25),
+    "Purple": (0.55, 0.2, 0.85),
+    "Orange": (0.95, 0.5, 0.1),
+    "Teal": (0.1, 0.6, 0.6),
+}
 
 
 def load_theme():
@@ -29,6 +41,30 @@ def load_theme():
 def save_theme(theme):
     with open(THEME_PATH, "w") as f:
         json.dump(theme, f, indent=2)
+
+
+class GradientBackground(Widget):
+    def __init__(self, top_color=(0.1, 0.1, 0.15, 1), bottom_color=(0.05, 0.05, 0.08, 1), **kwargs):
+        super().__init__(**kwargs)
+        self.top_color = top_color
+        self.bottom_color = bottom_color
+        self.bind(pos=self.redraw, size=self.redraw)
+        self.redraw()
+
+    def redraw(self, *args):
+        self.canvas.before.clear()
+        steps = 40
+        with self.canvas.before:
+            for i in range(steps):
+                t = i / steps
+                r = self.top_color[0] + (self.bottom_color[0] - self.top_color[0]) * t
+                g = self.top_color[1] + (self.bottom_color[1] - self.top_color[1]) * t
+                b = self.top_color[2] + (self.bottom_color[2] - self.top_color[2]) * t
+                Color(r, g, b, 1)
+                Rectangle(
+                    pos=(self.x, self.y + self.height * (1 - (i + 1) / steps)),
+                    size=(self.width, self.height / steps + 1),
+                )
 
 
 class LoginScreen(MDScreen):
@@ -283,6 +319,15 @@ class ThemeSettingsScreen(MDScreen):
             btn.bind(on_release=self.pick_color)
             color_grid.add_widget(btn)
         outer.add_widget(color_grid)
+
+        gradient_btn = MDButton(MDButtonText(text="Toggle gradient background"), style="outlined")
+        gradient_btn.bind(on_release=self.toggle_gradient)
+        outer.add_widget(gradient_btn)
+
+        glow_btn = MDButton(MDButtonText(text="Toggle mention glow effect"), style="outlined")
+        glow_btn.bind(on_release=self.toggle_glow)
+        outer.add_widget(glow_btn)
+
         self.status_label = MDLabel(text="", halign="center", size_hint_y=None, height=dp(30))
         outer.add_widget(self.status_label)
         self.add_widget(outer)
@@ -293,6 +338,18 @@ class ThemeSettingsScreen(MDScreen):
         app.theme_cls.primary_palette = instance.color_name
         save_theme(app.theme)
         self.status_label.text = f"Theme set to {instance.color_name} (saved)"
+
+    def toggle_gradient(self, instance):
+        app = MDApp.get_running_app()
+        app.theme["use_gradient"] = not app.theme.get("use_gradient", False)
+        save_theme(app.theme)
+        self.status_label.text = f"Gradient background: {'ON' if app.theme['use_gradient'] else 'OFF'} (restart app to see it)"
+
+    def toggle_glow(self, instance):
+        app = MDApp.get_running_app()
+        app.theme["overlay_glow"] = not app.theme.get("overlay_glow", True)
+        save_theme(app.theme)
+        self.status_label.text = f"Mention glow: {'ON' if app.theme['overlay_glow'] else 'OFF'}"
 
     def go_back(self, *args):
         MDApp.get_running_app().root.current = "rooms"
@@ -577,13 +634,31 @@ class ChatScreen(MDScreen):
 
     def append_message(self, sender, body):
         app = MDApp.get_running_app()
+
+        def highlight(match):
+            return f"[color=42a5f5][b]{match.group(0)}[/b][/color]"
+
+        highlighted_body = re.sub(r"@[\w.\-]+(:[\w.\-]+)?", highlight, body)
+
+        my_username = getattr(app, "current_username", None)
+        i_was_mentioned = bool(my_username) and f"@{my_username}" in body
+
         label = MDLabel(
-            text=f"{sender}: {body}",
+            text=f"{sender}: {highlighted_body}",
+            markup=True,
             size_hint_y=None,
             height=dp(30),
             font_name=app.theme.get("font_regular", "Roboto"),
             font_size=app.theme.get("font_size", 16),
         )
+        if i_was_mentioned:
+            glow_enabled = app.theme.get("overlay_glow", True)
+            if glow_enabled:
+                accent = COLOR_RGB.get(app.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
+                label.md_bg_color = (accent[0], accent[1], accent[2], 0.25)
+            else:
+                label.md_bg_color = (0.3, 0.25, 0.05, 1)
+
         self.messages_layout.add_widget(label)
         self.scroll.scroll_to(label)
 
@@ -613,6 +688,17 @@ class ChatApp(MDApp):
         self.theme = load_theme()
         self.theme_cls.theme_style = self.theme.get("theme_style", "Dark")
         self.theme_cls.primary_palette = self.theme.get("primary_color", "Blue")
+
+        if self.theme.get("use_gradient", False):
+            from kivy.core.window import Window
+            accent = COLOR_RGB.get(self.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
+            top_color = (accent[0] * 0.25, accent[1] * 0.25, accent[2] * 0.35, 1)
+            bottom_color = (0.05, 0.05, 0.08, 1)
+            gradient = GradientBackground(top_color=top_color, bottom_color=bottom_color)
+            gradient.size_hint = (1, 1)
+            Window.bind(size=lambda *a: setattr(gradient, "size", Window.size))
+            gradient.size = Window.size
+
         font_regular_path = os.path.join(os.path.dirname(__file__), "fonts", f'{self.theme.get("font_regular", "Roboto")}.ttf')
         if os.path.exists(font_regular_path):
             LabelBase.register(name=self.theme["font_regular"], fn_regular=font_regular_path)
@@ -630,12 +716,18 @@ class ChatApp(MDApp):
     def start_sync_loop(self):
         if self.sync_task is None:
             self.client.add_event_callback(self.on_message, RoomMessageText)
+            self.client.add_response_callback(self.on_sync, SyncResponse)
             self.sync_task = asyncio.create_task(self.client.sync_forever(timeout=30000))
 
     async def on_message(self, room, event):
         chat_screen = self.root.get_screen("chat")
         if chat_screen.room_id == room.room_id:
             chat_screen.append_message(event.sender, event.body)
+        self.root.get_screen("rooms").refresh_room_buttons()
+
+    async def on_sync(self, response):
+        for room_id in list(self.client.invited_rooms.keys()):
+            await self.client.join(room_id)
         self.root.get_screen("rooms").refresh_room_buttons()
 
 
