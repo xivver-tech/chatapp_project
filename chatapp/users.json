@@ -1,32 +1,22 @@
 {
-  "test1": {
-    "password_hash": "7c51aac2571f608bb6fabbc75ab6f85a2cd8baf646655c3f13badf81fa6c6d31",
-    "salt": "be4df1c54dee8a20c74eb27bd5089ad8",
-    "is_superuser": false
-  },
   "xivver": {
     "password_hash": "64e83a82aec46e9dd126058aa444ecaa07764a91a09d7c6b292454e74b7d9af6",
     "salt": "6b620d6b09b68c77955c8a3732b2c609",
     "is_superuser": true
   },
-  "test2": {
-    "password_hash": "b743f9e1fb7db40b75138da8aff29d6f042c9543874dc0eeee8fcc3639f2877a",
-    "salt": "f61644009744c8900f979c9ca36f999c",
-    "is_superuser": false
-  },
   "deadbeef": {
-    "password_hash": "29b9931cab42642b457f980a3bb7ab17f34494db14c7a5e505935de4a11aeb36",
-    "salt": "a0de6fd4e4ffc542e04fff2105622592",
+    "password_hash": "f42410ed5fd78a319d5f08e3c30f2ea3b08bf9370d45e6abddad2530c7ab4ebf",
+    "salt": "3d1b4c7e38713291815834eb37ae14d6",
     "is_superuser": true
   },
-  "yahya": {
-    "password_hash": "18f0237a757448837ad23d4768a1608d0f94f58bb09683dd49ce6d60b4691be5",
-    "salt": "4ee64fe69f05325e25c73d892e823c88",
+  "user1": {
+    "password_hash": "fa82f3dc2dde3255974610bfe8b7fdeb59c08205f823d032e300c213b00b85c1",
+    "salt": "b59284ab9f2d9f5d5739c0f7000087a0",
     "is_superuser": false
   },
-  "xivver_nexus": {
-    "password_hash": "775f3c5e6c49694f3cf143224a97a98ecb5bce6b8737727c22364933a037ca7a",
-    "salt": "c87c82a85272b1281ee9e402d090d606",
+  "user2": {
+    "password_hash": "f71b72c8eb165af55994be418c14f4a35c41fef4ea27e3fd1e6db15ffec0bb58",
+    "salt": "ac8aa722ee8d11b797077fd652f171df",
     "is_superuser": false
   }
 }

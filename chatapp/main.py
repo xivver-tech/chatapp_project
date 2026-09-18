@@ -1,9 +1,18 @@
 import json
 import os
 import re
+import io
+import hashlib
+import colorsys
+import datetime
 import asyncio
 
 import requests
+from PIL import Image as PILImage
+from plyer import notification
+from kivy.core.image import Image as CoreImage
+from kivy.uix.image import Image as KivyImageWidget
+from kivy.uix.floatlayout import FloatLayout
 from kivymd.app import MDApp
 from kivymd.uix.screenmanager import MDScreenManager
 from kivymd.uix.screen import MDScreen
@@ -12,13 +21,11 @@ from kivymd.uix.button import MDButton, MDButtonText
 from kivymd.uix.label import MDLabel
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.widget import Widget
-from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.core.text import LabelBase
 from nio import AsyncClient, LoginResponse, RegisterResponse, RoomMessageText, SyncResponse
 
-from user_store import add_user, is_superuser, list_users, set_superuser
+from user_store import add_user, is_superuser, list_users, set_superuser, delete_user
 
 THEME_PATH = os.path.join(os.path.dirname(__file__), "themes", "default.json")
 AVAILABLE_COLORS = ["Blue", "Red", "Green", "Purple", "Orange", "Teal"]
@@ -43,28 +50,29 @@ def save_theme(theme):
         json.dump(theme, f, indent=2)
 
 
-class GradientBackground(Widget):
-    def __init__(self, top_color=(0.1, 0.1, 0.15, 1), bottom_color=(0.05, 0.05, 0.08, 1), **kwargs):
-        super().__init__(**kwargs)
-        self.top_color = top_color
-        self.bottom_color = bottom_color
-        self.bind(pos=self.redraw, size=self.redraw)
-        self.redraw()
+def get_domain(homeserver_url):
+    return homeserver_url.split("://")[-1].split(":")[0]
 
-    def redraw(self, *args):
-        self.canvas.before.clear()
-        steps = 40
-        with self.canvas.before:
-            for i in range(steps):
-                t = i / steps
-                r = self.top_color[0] + (self.bottom_color[0] - self.top_color[0]) * t
-                g = self.top_color[1] + (self.bottom_color[1] - self.top_color[1]) * t
-                b = self.top_color[2] + (self.bottom_color[2] - self.top_color[2]) * t
-                Color(r, g, b, 1)
-                Rectangle(
-                    pos=(self.x, self.y + self.height * (1 - (i + 1) / steps)),
-                    size=(self.width, self.height / steps + 1),
-                )
+
+def make_gradient_widget(top_rgb, bottom_rgb):
+    width, height = 4, 512
+    img = PILImage.new("RGB", (width, height))
+    px = img.load()
+    for y in range(height):
+        t = y / height
+        r = int((top_rgb[0] + (bottom_rgb[0] - top_rgb[0]) * t) * 255)
+        g = int((top_rgb[1] + (bottom_rgb[1] - top_rgb[1]) * t) * 255)
+        b = int((top_rgb[2] + (bottom_rgb[2] - top_rgb[2]) * t) * 255)
+        for x in range(width):
+            px[x, y] = (r, g, b)
+    buf = io.BytesIO()
+    img.save(buf, format="png")
+    buf.seek(0)
+    core_img = CoreImage(buf, ext="png")
+    widget = KivyImageWidget(texture=core_img.texture, allow_stretch=True, keep_ratio=False)
+    widget.size_hint = (1, 1)
+    widget.pos_hint = {"x": 0, "y": 0}
+    return widget
 
 
 class LoginScreen(MDScreen):
@@ -88,7 +96,7 @@ class LoginScreen(MDScreen):
         self.add_widget(layout)
 
     def go_to_register(self, *args):
-        MDApp.get_running_app().root.current = "register"
+        MDApp.get_running_app().root_screen_manager.current = "register"
 
     def try_login(self, *args):
         self.status_label.text = "wait a few seconds"
@@ -103,14 +111,15 @@ class LoginScreen(MDScreen):
             app.current_username = username
             if is_superuser(username):
                 self.status_label.text = f"Logged in as {resp.user_id} (admin)"
-                app.root.current = "admin"
+                app.root_screen_manager.current = "admin"
                 return
             self.status_label.text = f"Logged in as {resp.user_id}"
-            app.root.get_screen("rooms").load_rooms()
-            app.root.current = "rooms"
+            app.root_screen_manager.get_screen("rooms").load_rooms()
+            app.root_screen_manager.current = "rooms"
             app.start_sync_loop()
         else:
             self.status_label.text = f"Login failed: {resp}"
+            await client.close()
 
 
 class RegisterScreen(MDScreen):
@@ -136,7 +145,7 @@ class RegisterScreen(MDScreen):
         self.add_widget(layout)
 
     def go_back(self, *args):
-        MDApp.get_running_app().root.current = "login"
+        MDApp.get_running_app().root_screen_manager.current = "login"
 
     def try_register(self, *args):
         username = self.username_field.text.strip()
@@ -159,11 +168,12 @@ class RegisterScreen(MDScreen):
             add_user(username, password, is_superuser=False)
             self.status_label.text = f"Account created: {resp.user_id}. You can log in now."
             await client.close()
-            login_screen = MDApp.get_running_app().root.get_screen("login")
+            app = MDApp.get_running_app()
+            login_screen = app.root_screen_manager.get_screen("login")
             login_screen.username_field.text = username
             login_screen.server_field.text = server
             login_screen.status_label.text = "Account created — log in below"
-            MDApp.get_running_app().root.current = "login"
+            app.root_screen_manager.current = "login"
         else:
             self.status_label.text = f"Registration failed: {resp}"
             await client.close()
@@ -178,7 +188,7 @@ class NewChatScreen(MDScreen):
             size_hint=(0.8, 0.5), pos_hint={"center_x": 0.5, "center_y": 0.5},
         )
         self.status_label = MDLabel(text="Start a chat with a friend", halign="center")
-        self.user_id_field = MDTextField(hint_text="@friend:localhost")
+        self.user_id_field = MDTextField(hint_text="@friend:yourserver")
         start_button = MDButton(MDButtonText(text="Start chat"), style="filled")
         start_button.bind(on_release=self.start_chat)
         back_button = MDButton(MDButtonText(text="Back"), style="text")
@@ -188,13 +198,15 @@ class NewChatScreen(MDScreen):
         self.add_widget(layout)
 
     def go_back(self, *args):
-        MDApp.get_running_app().root.current = "rooms"
+        MDApp.get_running_app().root_screen_manager.current = "rooms"
 
     def start_chat(self, *args):
-        user_id = self.user_id_field.text.strip()
-        if not user_id.startswith("@") or ":" not in user_id:
-            self.status_label.text = "Enter a full Matrix ID, e.g. @friend:localhost"
-            return
+        app = MDApp.get_running_app()
+        raw = self.user_id_field.text.strip()
+        if raw.startswith("@") and ":" in raw:
+            user_id = raw
+        else:
+            user_id = f"@{raw}:{get_domain(app.client.homeserver)}"
         self.status_label.text = "Starting chat..."
         asyncio.create_task(self._start_chat(user_id))
 
@@ -202,8 +214,8 @@ class NewChatScreen(MDScreen):
         app = MDApp.get_running_app()
         resp = await app.client.room_create(invite=[user_id], is_direct=True)
         self.status_label.text = f"Chat started: {resp}"
-        app.root.get_screen("rooms").load_rooms()
-        app.root.current = "rooms"
+        app.root_screen_manager.get_screen("rooms").load_rooms()
+        app.root_screen_manager.current = "rooms"
 
 
 class NewGroupScreen(MDScreen):
@@ -216,7 +228,7 @@ class NewGroupScreen(MDScreen):
         )
         self.status_label = MDLabel(text="Create a group", halign="center")
         self.name_field = MDTextField(hint_text="Group name")
-        self.members_field = MDTextField(hint_text="Members, comma-separated (@a:localhost, @b:localhost)")
+        self.members_field = MDTextField(hint_text="Members, comma-separated (a, b, or full @a:server)")
         create_button = MDButton(MDButtonText(text="Create group"), style="filled")
         create_button.bind(on_release=self.create_group)
         back_button = MDButton(MDButtonText(text="Back"), style="text")
@@ -226,15 +238,22 @@ class NewGroupScreen(MDScreen):
         self.add_widget(layout)
 
     def go_back(self, *args):
-        MDApp.get_running_app().root.current = "rooms"
+        MDApp.get_running_app().root_screen_manager.current = "rooms"
 
     def create_group(self, *args):
+        app = MDApp.get_running_app()
         name = self.name_field.text.strip()
         members_raw = self.members_field.text.strip()
         if not name:
             self.status_label.text = "Group needs a name"
             return
-        members = [m.strip() for m in members_raw.split(",") if m.strip()]
+        domain = get_domain(app.client.homeserver)
+        members = []
+        for m in members_raw.split(","):
+            m = m.strip()
+            if not m:
+                continue
+            members.append(m if (m.startswith("@") and ":" in m) else f"@{m}:{domain}")
         self.status_label.text = "Creating group..."
         asyncio.create_task(self._create_group(name, members))
 
@@ -242,8 +261,8 @@ class NewGroupScreen(MDScreen):
         app = MDApp.get_running_app()
         resp = await app.client.room_create(name=name, invite=members)
         self.status_label.text = f"Group created: {resp}"
-        app.root.get_screen("rooms").load_rooms()
-        app.root.current = "rooms"
+        app.root_screen_manager.get_screen("rooms").load_rooms()
+        app.root_screen_manager.current = "rooms"
 
 
 class RoomListScreen(MDScreen):
@@ -269,13 +288,13 @@ class RoomListScreen(MDScreen):
         self.add_widget(outer)
 
     def open_theme_settings(self, *args):
-        MDApp.get_running_app().root.current = "theme_settings"
+        MDApp.get_running_app().root_screen_manager.current = "theme_settings"
 
     def open_new_chat(self, *args):
-        MDApp.get_running_app().root.current = "new_chat"
+        MDApp.get_running_app().root_screen_manager.current = "new_chat"
 
     def open_new_group(self, *args):
-        MDApp.get_running_app().root.current = "new_group"
+        MDApp.get_running_app().root_screen_manager.current = "new_group"
 
     def load_rooms(self):
         asyncio.create_task(self._load_rooms())
@@ -296,10 +315,10 @@ class RoomListScreen(MDScreen):
 
     def open_room(self, instance):
         app = MDApp.get_running_app()
-        chat_screen = app.root.get_screen("chat")
+        chat_screen = app.root_screen_manager.get_screen("chat")
         chat_screen.room_id = instance.room_id
         chat_screen.load_messages()
-        app.root.current = "chat"
+        app.root_screen_manager.current = "chat"
 
 
 class ThemeSettingsScreen(MDScreen):
@@ -324,10 +343,6 @@ class ThemeSettingsScreen(MDScreen):
         gradient_btn.bind(on_release=self.toggle_gradient)
         outer.add_widget(gradient_btn)
 
-        glow_btn = MDButton(MDButtonText(text="Toggle mention glow effect"), style="outlined")
-        glow_btn.bind(on_release=self.toggle_glow)
-        outer.add_widget(glow_btn)
-
         self.status_label = MDLabel(text="", halign="center", size_hint_y=None, height=dp(30))
         outer.add_widget(self.status_label)
         self.add_widget(outer)
@@ -337,22 +352,19 @@ class ThemeSettingsScreen(MDScreen):
         app.theme["primary_color"] = instance.color_name
         app.theme_cls.primary_palette = instance.color_name
         save_theme(app.theme)
+        if app.theme.get("use_gradient", False):
+            app.refresh_gradient()
         self.status_label.text = f"Theme set to {instance.color_name} (saved)"
 
     def toggle_gradient(self, instance):
         app = MDApp.get_running_app()
         app.theme["use_gradient"] = not app.theme.get("use_gradient", False)
         save_theme(app.theme)
-        self.status_label.text = f"Gradient background: {'ON' if app.theme['use_gradient'] else 'OFF'} (restart app to see it)"
-
-    def toggle_glow(self, instance):
-        app = MDApp.get_running_app()
-        app.theme["overlay_glow"] = not app.theme.get("overlay_glow", True)
-        save_theme(app.theme)
-        self.status_label.text = f"Mention glow: {'ON' if app.theme['overlay_glow'] else 'OFF'}"
+        app.refresh_gradient()
+        self.status_label.text = f"Gradient background: {'ON' if app.theme['use_gradient'] else 'OFF'}"
 
     def go_back(self, *args):
-        MDApp.get_running_app().root.current = "rooms"
+        MDApp.get_running_app().root_screen_manager.current = "rooms"
 
 
 class AdminScreen(MDScreen):
@@ -395,8 +407,8 @@ class AdminScreen(MDScreen):
 
         outer.add_widget(MDLabel(text="Kick / ban from a room", halign="center", size_hint_y=None, height=dp(30)))
         room_mod_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56), spacing=dp(8))
-        self.mod_room_field = MDTextField(hint_text="Room ID (!abc:localhost)")
-        self.mod_user_field = MDTextField(hint_text="User (@name:localhost)")
+        self.mod_room_field = MDTextField(hint_text="Room ID (!abc:yourserver)")
+        self.mod_user_field = MDTextField(hint_text="User (@name:yourserver or just name)")
         kick_button = MDButton(MDButtonText(text="Kick"), style="outlined")
         kick_button.bind(on_release=self.kick_user)
         ban_button = MDButton(MDButtonText(text="Ban"), style="outlined")
@@ -418,6 +430,15 @@ class AdminScreen(MDScreen):
         redact_row.add_widget(redact_button)
         outer.add_widget(redact_row)
 
+        outer.add_widget(MDLabel(text="Purge full room history", halign="center", size_hint_y=None, height=dp(30)))
+        purge_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56), spacing=dp(8))
+        self.purge_room_field = MDTextField(hint_text="Room ID (!abc:yourserver)")
+        purge_button = MDButton(MDButtonText(text="Purge history"), style="outlined")
+        purge_button.bind(on_release=self.purge_room)
+        purge_row.add_widget(self.purge_room_field)
+        purge_row.add_widget(purge_button)
+        outer.add_widget(purge_row)
+
         self.status_label = MDLabel(text="", halign="center", size_hint_y=None, height=dp(30))
         outer.add_widget(self.status_label)
 
@@ -436,8 +457,7 @@ class AdminScreen(MDScreen):
 
     def _to_user_id(self, username):
         app = MDApp.get_running_app()
-        domain = app.client.homeserver.split("://")[-1].split(":")[0]
-        return username if username.startswith("@") else f"@{username}:{domain}"
+        return username if username.startswith("@") else f"@{username}:{get_domain(app.client.homeserver)}"
 
     def refresh_user_list(self):
         self.user_list_layout.clear_widgets()
@@ -513,7 +533,8 @@ class AdminScreen(MDScreen):
         try:
             resp = requests.post(url, headers=self._admin_headers(), json={"erase": False}, timeout=10)
             if resp.status_code == 200:
-                self.status_label.text = f"{username} deactivated"
+                delete_user(username)
+                self.status_label.text = f"{username} deactivated and removed from list"
             else:
                 self.status_label.text = f"Deactivate failed: {resp.status_code} {resp.text}"
         except Exception as e:
@@ -566,13 +587,16 @@ class AdminScreen(MDScreen):
 
     async def _room_action(self, action, room_id, user_id):
         app = MDApp.get_running_app()
-        url = f"{app.client.homeserver}/_synapse/admin/v1/rooms/{room_id}/{action}"
         try:
-            resp = requests.post(url, headers=self._admin_headers(), json={"user_id": user_id}, timeout=10)
-            if resp.status_code == 200:
-                self.status_label.text = f"{action.capitalize()}ned {user_id} from {room_id}"
+            if action == "kick":
+                resp = await app.client.room_kick(room_id, user_id, reason="Removed by admin")
             else:
-                self.status_label.text = f"{action} failed: {resp.status_code} {resp.text}"
+                resp = await app.client.room_ban(room_id, user_id, reason="Removed by admin")
+
+            if hasattr(resp, "message") and hasattr(resp, "status_code"):
+                self.status_label.text = f"{action} failed: {resp.status_code} {resp.message}"
+            else:
+                self.status_label.text = f"{action.capitalize()}ned {user_id} from {room_id}"
         except Exception as e:
             self.status_label.text = f"{action} failed: {e}"
 
@@ -590,8 +614,28 @@ class AdminScreen(MDScreen):
         resp = await app.client.room_redact(room_id, event_id, reason="Removed by admin")
         self.status_label.text = f"Redact result: {resp}"
 
+    def purge_room(self, *args):
+        room_id = self.purge_room_field.text.strip()
+        if not room_id:
+            self.status_label.text = "Room ID required"
+            return
+        self.status_label.text = "Purging history..."
+        asyncio.create_task(self._purge_room(room_id))
+
+    async def _purge_room(self, room_id):
+        app = MDApp.get_running_app()
+        url = f"{app.client.homeserver}/_synapse/admin/v1/purge_history/{room_id}"
+        try:
+            resp = requests.post(url, headers=self._admin_headers(), json={"delete_local_events": True}, timeout=15)
+            if resp.status_code == 200:
+                self.status_label.text = f"History purge started for {room_id}"
+            else:
+                self.status_label.text = f"Purge failed: {resp.status_code} {resp.text}"
+        except Exception as e:
+            self.status_label.text = f"Purge failed: {e}"
+
     def logout(self, *args):
-        MDApp.get_running_app().root.current = "login"
+        MDApp.get_running_app().root_screen_manager.current = "login"
 
 
 class ChatScreen(MDScreen):
@@ -600,8 +644,15 @@ class ChatScreen(MDScreen):
         self.name = "chat"
         self.room_id = None
         outer = BoxLayout(orientation="vertical")
+
+        top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48))
         back_button = MDButton(MDButtonText(text="Back to rooms"), style="text")
         back_button.bind(on_release=self.go_back)
+        clear_button = MDButton(MDButtonText(text="Clear chat"), style="text")
+        clear_button.bind(on_release=self.clear_chat_view)
+        top_row.add_widget(back_button)
+        top_row.add_widget(clear_button)
+
         self.messages_layout = BoxLayout(orientation="vertical", spacing=dp(4), padding=dp(8), size_hint_y=None)
         self.messages_layout.bind(minimum_height=self.messages_layout.setter("height"))
         self.scroll = ScrollView()
@@ -613,13 +664,18 @@ class ChatScreen(MDScreen):
         send_button.bind(on_release=self.send_message)
         input_row.add_widget(self.message_input)
         input_row.add_widget(send_button)
-        outer.add_widget(back_button)
+        outer.add_widget(top_row)
         outer.add_widget(self.scroll)
         outer.add_widget(input_row)
         self.add_widget(outer)
 
     def go_back(self, *args):
-        MDApp.get_running_app().root.current = "rooms"
+        MDApp.get_running_app().root_screen_manager.current = "rooms"
+
+    def clear_chat_view(self, *args):
+        # Clears only what's displayed on your screen right now.
+        # Deleting messages from the server for everyone requires admin rights (see Admin Dashboard > Delete/Purge).
+        self.messages_layout.clear_widgets()
 
     def load_messages(self):
         asyncio.create_task(self._load_messages())
@@ -630,34 +686,35 @@ class ChatScreen(MDScreen):
         history = await app.client.room_messages(self.room_id, start="", limit=20)
         for event in reversed(history.chunk):
             if isinstance(event, RoomMessageText):
-                self.append_message(event.sender, event.body)
+                self.append_message(event.sender, event.body, getattr(event, "server_timestamp", None))
 
-    def append_message(self, sender, body):
+    def append_message(self, sender, body, timestamp_ms=None):
         app = MDApp.get_running_app()
 
+        accent = COLOR_RGB.get(app.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
+        accent_hex = "".join(f"{int(c * 255):02x}" for c in accent)
+
         def highlight(match):
-            return f"[color=42a5f5][b]{match.group(0)}[/b][/color]"
+            return f"[color={accent_hex}][b]{match.group(0)}[/b][/color]"
 
         highlighted_body = re.sub(r"@[\w.\-]+(:[\w.\-]+)?", highlight, body)
 
-        my_username = getattr(app, "current_username", None)
-        i_was_mentioned = bool(my_username) and f"@{my_username}" in body
+        sender_username = sender.lstrip("@").split(":")[0]
+
+        if timestamp_ms:
+            time_str = datetime.datetime.fromtimestamp(timestamp_ms / 1000).strftime("%H:%M")
+        else:
+            time_str = datetime.datetime.now().strftime("%H:%M")
 
         label = MDLabel(
-            text=f"{sender}: {highlighted_body}",
+            text=f"[b]{sender_username}[/b]  {highlighted_body}  [color=999999][size={int(dp(11))}]{time_str}[/size][/color]",
             markup=True,
             size_hint_y=None,
-            height=dp(30),
             font_name=app.theme.get("font_regular", "Roboto"),
             font_size=app.theme.get("font_size", 16),
         )
-        if i_was_mentioned:
-            glow_enabled = app.theme.get("overlay_glow", True)
-            if glow_enabled:
-                accent = COLOR_RGB.get(app.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
-                label.md_bg_color = (accent[0], accent[1], accent[2], 0.25)
-            else:
-                label.md_bg_color = (0.3, 0.25, 0.05, 1)
+        label.bind(width=lambda inst, val: setattr(inst, "text_size", (val, None)))
+        label.bind(texture_size=lambda inst, val: setattr(inst, "height", val[1] + dp(4)))
 
         self.messages_layout.add_widget(label)
         self.scroll.scroll_to(label)
@@ -683,26 +740,21 @@ class ChatApp(MDApp):
     theme = None
     sync_task = None
     current_username = None
+    root_screen_manager = None
+    root_layout = None
+    gradient_widget = None
 
     def build(self):
         self.theme = load_theme()
         self.theme_cls.theme_style = self.theme.get("theme_style", "Dark")
         self.theme_cls.primary_palette = self.theme.get("primary_color", "Blue")
 
-        if self.theme.get("use_gradient", False):
-            from kivy.core.window import Window
-            accent = COLOR_RGB.get(self.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
-            top_color = (accent[0] * 0.25, accent[1] * 0.25, accent[2] * 0.35, 1)
-            bottom_color = (0.05, 0.05, 0.08, 1)
-            gradient = GradientBackground(top_color=top_color, bottom_color=bottom_color)
-            gradient.size_hint = (1, 1)
-            Window.bind(size=lambda *a: setattr(gradient, "size", Window.size))
-            gradient.size = Window.size
-
         font_regular_path = os.path.join(os.path.dirname(__file__), "fonts", f'{self.theme.get("font_regular", "Roboto")}.ttf')
         if os.path.exists(font_regular_path):
             LabelBase.register(name=self.theme["font_regular"], fn_regular=font_regular_path)
+
         sm = MDScreenManager()
+        self.root_screen_manager = sm
         sm.add_widget(LoginScreen())
         sm.add_widget(RegisterScreen())
         sm.add_widget(NewChatScreen())
@@ -711,7 +763,27 @@ class ChatApp(MDApp):
         sm.add_widget(ChatScreen())
         sm.add_widget(ThemeSettingsScreen())
         sm.add_widget(AdminScreen())
-        return sm
+
+        self.root_layout = FloatLayout()
+        self.root_layout.add_widget(sm)
+
+        if self.theme.get("use_gradient", False):
+            self.refresh_gradient()
+
+        return self.root_layout
+
+    def refresh_gradient(self):
+        if not self.root_layout:
+            return
+        if self.gradient_widget:
+            self.root_layout.remove_widget(self.gradient_widget)
+            self.gradient_widget = None
+        if self.theme.get("use_gradient", False):
+            accent = COLOR_RGB.get(self.theme.get("primary_color", "Blue"), (0.2, 0.5, 1))
+            top_color = (accent[0] * 0.25, accent[1] * 0.25, accent[2] * 0.35)
+            bottom_color = (0.05, 0.05, 0.08)
+            self.gradient_widget = make_gradient_widget(top_color, bottom_color)
+            self.root_layout.add_widget(self.gradient_widget, index=len(self.root_layout.children))
 
     def start_sync_loop(self):
         if self.sync_task is None:
@@ -720,15 +792,29 @@ class ChatApp(MDApp):
             self.sync_task = asyncio.create_task(self.client.sync_forever(timeout=30000))
 
     async def on_message(self, room, event):
-        chat_screen = self.root.get_screen("chat")
-        if chat_screen.room_id == room.room_id:
-            chat_screen.append_message(event.sender, event.body)
-        self.root.get_screen("rooms").refresh_room_buttons()
+        chat_screen = self.root_screen_manager.get_screen("chat")
+        currently_viewing = chat_screen.room_id == room.room_id
+
+        is_own_message = event.sender.lstrip("@").split(":")[0] == self.current_username
+        if not is_own_message and not currently_viewing:
+            try:
+                notification.notify(
+                    title=room.display_name or "New message",
+                    message=f"{event.sender}: {event.body}",
+                    app_name="Chat",
+                    timeout=5,
+                )
+            except Exception:
+                pass
+
+        if currently_viewing:
+            chat_screen.append_message(event.sender, event.body, getattr(event, "server_timestamp", None))
+        self.root_screen_manager.get_screen("rooms").refresh_room_buttons()
 
     async def on_sync(self, response):
         for room_id in list(self.client.invited_rooms.keys()):
             await self.client.join(room_id)
-        self.root.get_screen("rooms").refresh_room_buttons()
+        self.root_screen_manager.get_screen("rooms").refresh_room_buttons()
 
 
 if __name__ == "__main__":

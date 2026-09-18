@@ -59,6 +59,13 @@ def set_superuser(username, value=True):
         return True
     return False
 
+def delete_user(username):
+    users = _load()
+    if username in users:
+        del users[username]
+        _save(users)
+        return True
+    return False
 
 def list_users():
     users = _load()
