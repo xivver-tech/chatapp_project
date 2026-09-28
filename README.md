@@ -1,46 +1,95 @@
-Résumé
+# Chat App
 
-Projet d'appli de chat multiplateforme (Win/Lin/Android) inspirée de Matrix/XMPP/Discord
+A self-hosted, cross-platform (Windows / Linux / Android) chat client built entirely in Python, using the [Matrix](https://matrix.org) protocol for the backend. Inspired by Discord/WhatsApp/Matrix clients — customizable themes, an in-app admin dashboard, message replies, presence, and more.
 
-Détails
-veut créer une appli de chat compatible Windows, Linux et Android
-s'inspire de Matrix, XMPP et Discord
-veut un thème très personnalisable (couleurs etc., façon Nitro sur Discord)
-veut une authentification simple nom d'utilisateur/mot de passe, sans 2FA
-veut que l'app soit facile d'accès et open source
-veut un panneau d'administration pour accéder au backend
-a choisi de construire sur un protocole existant (Matrix/XMPP) plutôt qu'un backend custom
-a un niveau de programmation "some experience" (intermédiaire)
-veut pouvoir basculer facilement entre un serveur local et un serveur en ligne
-Avancement
-Serveur Synapse local fonctionnel (Docker, Ubuntu, sqlite3), compte admin "xivver" créé, connexion confirmée avec matrix-nio en Python
-Cycle complet confirmé en Python/matrix-nio : création de salon, envoi de message, lecture de message (tout fonctionne)
-Client Kivy/KivyMD en Python démarré : écran de connexion fonctionnel (asyncio intégré via async_run), connexion testée avec succès
-Flux complet fonctionnel dans le client Kivy : connexion → liste des salons → écran de discussion (historique + envoi de message)
-ordre de développement choisi : 1) système de thèmes personnalisables, 2) mises à jour en temps réel, 3) écran d'inscription, 4) packaging Android/Windows
-Système de thèmes de base ajouté (JSON avec couleurs + polices, chargé via load_theme() et appliqué à theme_cls) ; app testée à nouveau avec succès (connexion, salons, messages)
-veut aussi une page web accessible uniquement quand son PC est allumé (en plus du client Kivy)
-Écran de thème (choix de couleur) et envoi de message avec la touche Entrée ajoutés et fonctionnels
-Rafraîchissement en temps réel ajouté (sync_forever + callback sur nouveaux messages)
-Progrès autonomes de l'utilisateur : écran d'inscription (register), écrans "nouveau chat" et "nouveau groupe", module user_store.py qui enregistre les comptes localement avec un statut is_superuser
-veut un panneau d'admin avec un bouton pour promouvoir n'importe quel utilisateur en superutilisateur, et un écran de paramètres de compte avec option de quitter/désactiver le compte
-le tableau de bord admin doit être intégré directement dans l'appli Kivy (pas une appli Flask séparée) ; les superutilisateurs sont redirigés vers ce tableau de bord au lieu de l'appli de chat normale
-Tableau de bord admin intégré dans l'appli (AdminScreen) : inscription de nouveaux utilisateurs, liste des utilisateurs, bouton "Promote" fonctionnel (local + appel à l'Admin API de Synapse)
-veut plus d'outils de modération : rétrograder/désactiver des comptes, réinitialiser un mot de passe, bannir/expulser d'un salon, supprimer un message (redaction), et plus encore
-Outils de modération ajoutés dans AdminScreen : promote/demote (toggle), désactivation de compte, réinitialisation de mot de passe, kick/ban de salon, suppression de message (redaction)
-veut maintenant prioriser : rendre l'appli accessible à d'autres personnes + compatibilité Windows (avant de continuer sur d'autres fonctionnalités)
-Code complet fusionné en un seul main.py (thèmes, temps réel, inscription, nouveau chat/groupe, tableau de bord admin avec modération complète)
-veut mettre en place en même temps : le tunnel Cloudflare (pour rendre le serveur accessible) et un dépôt Git (pour distribuer le code)
-Tunnel Cloudflare configuré et fonctionnel (cloudflared installé, tunnel actif)
-compte GitHub : xivver-tech
-Dépôt Git créé et code poussé avec succès sur github.com/xivver-tech/chatapp
-Test réussi avec 2 comptes distincts (ayoub, yahya/xivver) mais salons non synchronisés (invitations pas acceptées automatiquement) ; correctif ajouté : auto-acceptation des invitations de salon via callback SyncResponse
-veut ensuite : vrais thèmes avancés (effets overlay façon Nitro Discord), messages façon WhatsApp (bulles), notifications, mentions (@) ; a choisi de commencer par les mentions (@)
-Mentions (@) ajoutées : détection par regex, mise en forme en gras/bleu, surlignage du message si l'utilisateur connecté est mentionné
-A créé un logo pour l'application (bulle de dialogue blanche avec 3 points colorés, fond dégradé violet-bleu, étincelle)
-veut créer un APK Android pour l'application
-Build Buildozer entièrement nettoyé (.buildozer supprimé) pour repartir à zéro
-a choisi de développer ensuite : effets de thème avancés/overlay (façon Nitro Discord)
-Effets overlay ajoutés (fond dégradé, halo de mention) mais le dégradé ne s'affichait pas (bug : jamais attaché au canvas) ; correctif appliqué + suppression du domaine "localhost" codé en dur (dérivé dynamiquement du serveur homeserver à la place)
-veut que l'app soit entièrement en Python
-veut une interface propre/correcte sur toutes les plateformes, sans viser un niveau ultra poli (pas besoin d'un niveau "Nitro")
+## Features
+
+- Username/password login and signup (no 2FA)
+- Real-time messaging (live sync, no manual refresh)
+- Start 1-on-1 chats or create groups
+- @mentions with highlighting
+- Message replies/quotes
+- Online/offline presence indicators
+- Customizable theme (accent color, optional gradient background)
+- Desktop notifications for new messages
+- In-app **Admin Dashboard** (for superuser accounts):
+  - Register new users
+  - Promote/demote admins
+  - Deactivate accounts
+  - Reset passwords
+  - Kick/ban users from a room
+  - Delete (redact) individual messages
+  - Purge a room's entire history
+- Works against any Matrix homeserver — self-hosted (Synapse) or otherwise
+
+## Requirements
+
+- Python 3.10+
+- A running Matrix homeserver (this project is built and tested against [Synapse](https://github.com/element-hq/synapse))
+
+## Installation
+
+### 1. Set up the client
+
+```bash
+git clone https://github.com/xivver-tech/chatapp.git
+cd chatapp
+python3 -m venv chatapp-env
+source chatapp-env/bin/activate      # Windows: chatapp-env\Scripts\activate
+pip install kivy kivymd matrix-nio requests plyer pillow
+```
+
+### 2. Set up a Matrix homeserver (Synapse, via Docker)
+
+If you don't already have a homeserver to connect to:
+
+```bash
+mkdir -p ~/synapse-data
+docker run -it --rm \
+  -v ~/synapse-data:/data \
+  -e SYNAPSE_SERVER_NAME=localhost \
+  -e SYNAPSE_REPORT_STATS=no \
+  matrixdotorg/synapse:latest generate
+
+docker run -d --name synapse -p 8008:8008 -v ~/synapse-data:/data matrixdotorg/synapse:latest
+```
+
+Create your first account (say `yes` when asked to make it an admin):
+
+```bash
+docker exec -it synapse register_new_matrix_user http://localhost:8008 -c /data/homeserver.yaml
+```
+
+### 3. Run the app
+
+```bash
+python3 main.py
+```
+
+Enter your homeserver URL (`http://localhost:8008` for a local server, or your public URL if hosted elsewhere), your username, and password.
+
+## Making an account a superuser (admin dashboard access)
+
+Superuser status is tracked locally in `users.json`, separate from Matrix's own permissions. To promote your first account:
+
+```bash
+python3 -c "
+from user_store import add_user
+add_user('your_username', 'your_password', is_superuser=True)
+"
+```
+
+Log in with that account and you'll be sent straight to the Admin Dashboard instead of the normal chat screen. From there you can register and promote other users through the UI — no more manual scripting needed after this first one.
+
+## Using the app
+
+- **New chat / New group**: from the room list, enter another user's username (or full `@user:server` ID) to start a conversation
+- **Reply**: tap "Reply" next to any message to quote it in your next message
+- **Theme**: change your accent color and toggle a gradient background from the Theme settings screen
+- **Clear chat**: clears your own local view of a conversation (does not delete messages for the other person — use the Admin Dashboard's redact/purge tools for that)
+
+## Notes
+
+- This is a personal/self-hosted project, not intended for production use at scale
+- Superuser accounts are tracked in `users.json` (kept out of version control — see `.gitignore`)
+- Building an Android APK is supported via [Buildozer](https://github.com/kivy/buildozer) (`buildozer.spec` included)
